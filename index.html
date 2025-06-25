@@ -19,6 +19,10 @@
       <div class="flex-1 min-w-[200px]">
         <label class="block text-blue-900 font-medium mb-1">Company</label>
         <input id="companyInput" class="border rounded p-2 w-full">
+          <option value="">-- اختر الشركة --</option>
+          <option value="Al-Rida">Al-Rida</option>
+          <option value="Al-Riyad">Al-Riyad</option>
+        </select>
       </div>
     </div>
 
@@ -52,7 +56,9 @@
       <button id="addRowBtn" onclick="addRow()" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded hidden">إضافة صف</button>
       <input id="fileNameInput" type="text" placeholder="اسم الملف" class="border rounded p-2 hidden" style="min-width: 150px;">
       <button id="pdfBtn" onclick="generatePDF()" class="bg-green-700 hover:bg-green-800 text-white font-semibold px-4 py-2 rounded hidden">توليد PDF</button>
+
       <input id="finalPagesInput" type="number" value="1" min="1" class="border rounded p-2 w-32 hidden" placeholder="عدد الصفحات المطلوب">
+      <button onclick="trimPages()" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded hidden" id="trimPagesBtn">حذف الصفحات الزائدة</button>
     </div>
   </div>
 
@@ -83,23 +89,18 @@
     }
 
     function formatNumber(num) {
-      return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
+  return num % 1 === 0 ? num.toLocaleString() : num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
 
-    function wrapArabicText(text) {
-      return `<span style="direction: rtl; unicode-bidi: isolate;">${text}</span>`;
-    }
 
     function newInvoice() {
       const dateInput = document.getElementById('dateInput').value;
-      let companyInput = document.getElementById('companyInput').value.trim();
+      const companyInput = document.getElementById('companyInput').value;
 
       if (!dateInput || !companyInput) {
         alert("يرجى إدخال التاريخ واختيار الشركة");
         return;
       }
-
-      companyInput = wrapArabicText(companyInput);
 
       rowsData = [];
       total = 0;
@@ -110,14 +111,16 @@
       document.getElementById('addRowBtn').classList.remove('hidden');
       document.getElementById('pdfBtn').classList.remove('hidden');
       document.getElementById('fileNameInput').classList.remove('hidden');
+      document.getElementById('finalPagesInput').classList.remove('hidden');
+      document.getElementById('trimPagesBtn').classList.remove('hidden');
       document.getElementById('upBtn').classList.remove('hidden');
       document.getElementById('downBtn').classList.remove('hidden');
 
-      buildPaginatedInvoice(rowsData.length, companyInput);
+      buildPaginatedInvoice(rowsData.length);
     }
 
     function addRow() {
-      let desc = document.getElementById('descInput').value.trim();
+      const desc = document.getElementById('descInput').value.trim();
       const qty = parseFloat(document.getElementById('qtyInput').value);
       const price = parseFloat(document.getElementById('priceInput').value);
       const currency = document.getElementById('currencyInput').value;
@@ -126,8 +129,6 @@
         alert("الرجاء إدخال بيانات صحيحة للصف.");
         return;
       }
-
-      desc = wrapArabicText(desc);
 
       const amount = qty * price;
       total += amount;
@@ -154,8 +155,8 @@
       return chunks;
     }
 
-    function buildPaginatedInvoice(customRowsPerPage = 5, customCompany = null) {
-      const companyRaw = customCompany || wrapArabicText(document.getElementById('companyInput').value.trim());
+    function buildPaginatedInvoice(customRowsPerPage = 5) {
+      const company = document.getElementById('companyInput').value;
       const date = document.getElementById('dateInput').value;
       const invoiceContainer = document.getElementById('invoice');
       invoiceContainer.innerHTML = '';
@@ -170,7 +171,7 @@
         let headerHTML = '';
         if (index === 0) {
           headerHTML = `
-            <div class="flex justify-between items-start mb-4">
+            <div class="flex justify-between items-start mb-4 ">
               <div class="flex flex-col">
                 <img src="SPC 03.png" alt="SPC Logo" style="width: 200px;" class="mb-1">
                 <div class="text-sm">SOLUTION PORTAL COMPANY</div>
@@ -183,8 +184,8 @@
             </div>
             <div class="mt-6">
               <div class="text-base mb-2"><strong>Invoice No:</strong> ${invoiceNo}</div>
-              <div class="text-base mb-2"><strong>Company:</strong> ${companyRaw}</div>
-              <div class="text-base mb-4"><strong>Quotation Date:</strong> ${date}</div>
+              <div class="text-base mb-2"><strong>Company:</strong> ${company}</div>
+              <div class="text-base mb-4"><strong>Invoice Date:</strong> ${date}</div>
             </div>
           `;
         }
@@ -194,9 +195,9 @@
             <thead>
               <tr class="bg-gray-300">
                 <th class="border border-black p-2">DESCRIPTION</th>
-                <th class="border border-black p-2 text-center">QUANTITY</th>
-                <th class="border border-black p-2">UNIT PRICE</th>
-                <th class="border border-black p-2">AMOUNT</th>
+                <th class="border border-black p-2 w-12 text-center">QTY</th>
+                <th class="border border-black w-36 p-2">UNIT PRICE</th>
+                <th class="border border-black w-36 p-2">AMOUNT</th>
               </tr>
             </thead>
             <tbody>
@@ -205,7 +206,7 @@
         chunk.forEach(row => {
           tableHTML += `
             <tr class="bg-gray-100">
-              <td class="border border-black p-2 break-words whitespace-pre-line">${row.desc}</td>
+              <td class="border border-black p-2 break-words whitespace-normal w-full">${row.desc}</td>
               <td class="border border-black p-2 text-center">${row.qty}</td>
               <td class="border border-black p-2">${row.price}</td>
               <td class="border border-black p-2">${row.amount}</td>
@@ -220,7 +221,7 @@
             <tfoot>
               <tr class="bg-gray-700 text-white font-bold">
                 <td class="border border-black p-2 text-left" colspan="3">Total</td>
-                <td class="border border-black p-2">${formatNumber(total)} ${rowsData[0]?.price.split(' ')[1]}</td>
+                <td class="border border-black p-2">${formatNumber(total)} ${rowsData[0].price.split(' ')[1]}</td>
               </tr>
             </tfoot>
           `;
@@ -239,7 +240,7 @@
             <div class="flex justify-between text-xs text-gray-500 mt-52">
               <span>info@spc-it.com.iq</span>
               <span>www.spc-it.com.iq</span>
-              <span>Phone number</span>
+              <span>+964 7849322346</span>
             </div>
           `;
         }
@@ -247,6 +248,16 @@
         pageDiv.innerHTML = headerHTML + tableHTML + footerHTML;
         invoiceContainer.appendChild(pageDiv);
       });
+    }
+
+    function trimPages() {
+      const pagesInput = parseInt(document.getElementById('finalPagesInput').value);
+      if (isNaN(pagesInput) || pagesInput <= 0) {
+        alert("يرجى إدخال عدد صفحات صحيح");
+        return;
+      }
+      const rowsPerPage = Math.ceil(rowsData.length / pagesInput);
+      buildPaginatedInvoice(rowsPerPage);
     }
 
     function adjustMargin(change) {
