@@ -122,32 +122,35 @@
     }
 
     function addRow() {
-      const desc = document.getElementById('descInput').value.trim();
-      const qty = parseFloat(document.getElementById('qtyInput').value);
-      const price = parseFloat(document.getElementById('priceInput').value);
-      const currency = document.getElementById('currencyInput').value;
+  const desc = document.getElementById('descInput').value.trim();
+  const qty = parseFloat(document.getElementById('qtyInput').value);
+  const price = parseFloat(document.getElementById('priceInput').value);
+  const currency = document.getElementById('currencyInput').value;
 
-      if (!desc || qty <= 0 || price <= 0) {
-        alert("الرجاء إدخال بيانات صحيحة للصف.");
-        return;
-      }
+  if (!desc || qty <= 0 || price <= 0) {
+    alert("الرجاء إدخال بيانات صحيحة للصف.");
+    return;
+  }
 
-      const amount = qty * price;
-      total += amount;
+  // ✅ استبدال الأسطر بـ <br>
+  const descFormatted = desc.replace(/\n/g, '<br>');
 
-      rowsData.push({
-        desc,
-        qty,
-        price: `${formatNumber(price)} ${currency}`,
-        amount: `${formatNumber(amount)} ${currency}`
-      });
+  const amount = qty * price;
+  total += amount;
 
-      document.getElementById('descInput').value = '';
-      document.getElementById('qtyInput').value = '';
-      document.getElementById('priceInput').value = '';
+  rowsData.push({
+    desc: descFormatted,
+    qty,
+    price: `${formatNumber(price)} ${currency}`,
+    amount: `${formatNumber(amount)} ${currency}`
+  });
 
-      buildPaginatedInvoice(rowsData.length);
-    }
+  document.getElementById('descInput').value = '';
+  document.getElementById('qtyInput').value = '';
+  document.getElementById('priceInput').value = '';
+
+  buildPaginatedInvoice(rowsData.length);
+}
 
     function splitChunks(array, size) {
       const chunks = [];
@@ -208,7 +211,7 @@
         chunk.forEach(row => {
           tableHTML += `
             <tr class="bg-gray-100">
-              <td class="border border-black p-2 break-words whitespace-normal w-full">${row.desc}</td>
+             <td class="border border-black p-2 break-words whitespace-normal w-full"><div>${row.desc}</div></td>
               <td class="border border-black p-2 text-center">${row.qty}</td>
               <td class="border border-black p-2">${row.price}</td>
               <td class="border border-black p-2">${row.amount}</td>
