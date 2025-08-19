@@ -100,6 +100,8 @@
 
   <script>
     // ====== الحالة العامة ======
+    let anchorIndex = null;   // أول صف انطلقت منه للتحديد بالرّينج (Shift)
+let focusedIndex = 0;     // الصف الحالي المتركّز عليه للتنقّل بالأسهم
     let editRowIndex = null;         // الصف الذي يتم تعديله الآن (أو null)
     let selectedRowIndexes = [];     // اختيار متعدد
     let rowsPerPageCurrent = 5;      // تقسيم الصفحات الحالي
@@ -200,12 +202,32 @@
       buildPaginatedInvoice(rowsData.length);
     }
 
-    function selectRow(globalIndex) {
-      const i = selectedRowIndexes.indexOf(globalIndex);
-      if (i > -1) selectedRowIndexes.splice(i, 1);
-      else selectedRowIndexes.push(globalIndex);
-      buildPaginatedInvoice(rowsPerPageCurrent);
-    }
+    function selectRow(globalIndex, evt) {
+  // لو داخل وضع التعديل، لا تغيّر التحديد
+  if (editRowIndex !== null) return;
+
+  const i = selectedRowIndexes.indexOf(globalIndex);
+
+  // إذا الصف هو الوحيد المختار ودوّست عليه مرة ثانية → ألغِ التحديد كله
+  if (selectedRowIndexes.length === 1 && selectedRowIndexes[0] === globalIndex) {
+    selectedRowIndexes = [];
+    anchorIndex = null;
+    buildPaginatedInvoice(rowsPerPageCurrent);
+    return;
+  }
+
+  // toggle عادي: إذا كان مختار شيله، إذا لا خليه هو الوحيد
+  if (i > -1) {
+    selectedRowIndexes.splice(i, 1);
+  } else {
+    selectedRowIndexes = [globalIndex];
+    anchorIndex = globalIndex;
+  }
+
+  focusedIndex = globalIndex;
+  buildPaginatedInvoice(rowsPerPageCurrent);
+}
+
 
     function deleteSelectedRow() {
       if (!selectedRowIndexes || selectedRowIndexes.length === 0) return;
@@ -389,7 +411,9 @@
           } else {
             tableHTML += `
               <tr class="bg-gray-100 ${selectedCls} cursor-pointer"
-                  onclick="selectRow(${globalIndex})">
+    onclick="selectRow(${globalIndex}, event)">
+
+
                 <td class="border border-black p-2 break-words whitespace-normal w-full"><div>${row.desc}</div></td>
                 <td class="border border-black p-2 text-center">${row.qty}</td>
                 <td class="border border-black p-2">${row.price || ''}</td>
@@ -595,36 +619,86 @@
     });
 
     // ====== تحكم الكيبورد: Enter/Backspace ======
-    document.addEventListener('keydown', (e) => {
-      const tag = (e.target?.tagName || '').toLowerCase();
-      const isTyping = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+   document.addEventListener('keydown', (e) => {
+  const tag = (e.target?.tagName || '').toLowerCase();
+  const isTyping = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
 
-      // Backspace: حذف الصفوف المحددة (إذا مو داخل كتابة ولا تعديل)
-      if (e.key === 'Backspace') {
-        if (isTyping || editRowIndex !== null) return;
-        if (selectedRowIndexes && selectedRowIndexes.length > 0) {
-          e.preventDefault();
-          deleteSelectedRow();
-        }
-        return;
+  // --- Backspace: حذف الصفوف المحددة (إذا مو داخل كتابة ولا تعديل) ---
+  if (e.key === 'Backspace') {
+    if (isTyping || editRowIndex !== null) return;
+    if (selectedRowIndexes && selectedRowIndexes.length > 0) {
+      e.preventDefault();
+      deleteSelectedRow();
+    }
+    return;
+  }
+
+  // --- Enter: فتح التعديل أو حفظه ---
+  if (e.key === 'Enter') {
+    // Shift+Enter داخل الوصف = سطر جديد
+    if (e.target && e.target.id === 'editDesc' && e.shiftKey) return;
+
+    e.preventDefault();
+
+    if (editRowIndex === null) {
+      if (selectedRowIndexes && selectedRowIndexes.length === 1) {
+        startEditRow();
       }
+    } else {
+      saveEditRow(editRowIndex);
+    }
+    return;
+  }
 
-      // Enter: فتح التعديل أو حفظه
-      if (e.key === 'Enter') {
-        // Shift+Enter داخل الوصف = سطر جديد
-        if (e.target && e.target.id === 'editDesc' && e.shiftKey) return;
+  // --- Arrow Up/Down: تنقل + Shift لتوسيع/تقليص التحديد ---
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (isTyping || editRowIndex !== null) return;
 
-        e.preventDefault();
+    e.preventDefault();
 
-        if (editRowIndex === null) {
-          if (selectedRowIndexes && selectedRowIndexes.length === 1) {
-            startEditRow();
-          }
-        } else {
-          saveEditRow(editRowIndex);
-        }
+    // احسب عدد الصفوف الفعلي
+    const totalRows = rowsData.length;
+    if (totalRows === 0) return;
+
+    // لو ماكو أنكور، خليها على أول محدد أو 0
+    if (anchorIndex === null) {
+      if (selectedRowIndexes.length > 0) {
+        anchorIndex = selectedRowIndexes[0];
+      } else {
+        anchorIndex = 0;
       }
-    });
+    }
+
+    // حدّد موضع التركيز الحالي
+    if (selectedRowIndexes.length > 0) {
+      // خليه آخر واحد محدد (أو أي منطق يناسبك)
+      focusedIndex = selectedRowIndexes[selectedRowIndexes.length - 1];
+    }
+
+    // حدّث الـ focusedIndex
+    if (e.key === 'ArrowDown') {
+      focusedIndex = Math.min(totalRows - 1, focusedIndex + 1);
+    } else if (e.key === 'ArrowUp') {
+      focusedIndex = Math.max(0, focusedIndex - 1);
+    }
+
+    if (e.shiftKey) {
+      // موسّع بالرّينج من anchorIndex إلى focusedIndex
+      const start = Math.min(anchorIndex, focusedIndex);
+      const end   = Math.max(anchorIndex, focusedIndex);
+      selectedRowIndexes = [];
+      for (let i = start; i <= end; i++) selectedRowIndexes.push(i);
+    } else {
+      // تحديد مفرد والتنقل
+      selectedRowIndexes = [focusedIndex];
+      anchorIndex = focusedIndex;
+    }
+
+    buildPaginatedInvoice(rowsPerPageCurrent);
+  }
+});
+
+
   </script>
 </body>
 </html>
