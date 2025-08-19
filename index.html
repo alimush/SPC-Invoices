@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" >
 <head>
   <meta charset="UTF-8" />
   <title>SPC Quotation Generator</title>
@@ -20,11 +20,15 @@
       </div>
       <div class="flex-1 min-w-[200px]">
         <label class="block text-blue-900 font-medium mb-1">Company</label>
-        <input id="companyInput" class="border rounded p-2 w-full">
-          <option value="">-- اختر الشركة --</option>
-          <option value="Al-Rida">Al-Rida</option>
-          <option value="Al-Riyad">Al-Riyad</option>
-        </select>
+        <input list="companies" id="companyInput" class="border rounded p-2 w-full" placeholder="اختر أو اكتب الشركة" />
+        <datalist id="companies">
+          <option value="Al-Rida"></option>
+          <option value="Al-Mezan"></option>
+          <option value="Al-Ghadeer"></option>
+          <option value="Al-Riyad"></option>
+          <option value="Anwar Al Emara"></option>
+          <option value="Smart House"></option>
+        </datalist>
       </div>
     </div>
 
@@ -59,19 +63,46 @@
       <input id="fileNameInput" type="text" placeholder="اسم الملف" class="border rounded p-2 hidden" style="min-width: 150px;">
       <button id="pdfBtn" onclick="generatePDF()" class="bg-green-700 hover:bg-green-800 text-white font-semibold px-4 py-2 rounded hidden">توليد PDF</button>
 
-      <input id="finalPagesInput" type="number" value="1" min="1" class="border rounded p-2 w-32 hidden" placeholder="عدد الصفحات المطلوب">
-      <button onclick="trimPages()" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded hidden" id="trimPagesBtn">حذف الصفحات الزائدة</button>
+      <!-- حفظ/تحميل JSON -->
+      <button id="saveJsonBtn"
+              onclick="downloadInvoiceJSON()"
+              class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded hidden no-pdf">
+        حفظ كـ JSON
+      </button>
+
+      <label class="bg-purple-700 hover:bg-purple-800 text-white font-semibold px-4 py-2 rounded cursor-pointer no-pdf">
+        تحميل فاتورة قديمة (JSON)
+        <input id="loadJsonInput" type="file" accept=".json" class="hidden"
+               onchange="loadInvoiceFromJSON(this.files[0])">
+      </label>
+
+     
+    </div>
+
+    <div id="statusDiv" class="flex flex-wrap gap-4 mb-6 hidden">
+      <div class="flex-1 min-w-[200px]">
+        <label class="block text-blue-900 font-medium mb-1">Invoice Status</label>
+        <select id="statusInput" class="border rounded p-2 w-full">
+          <option value="">-- none --</option>
+          <option value="Unpaid">Unpaid</option>
+          <option value="Paid">Paid</option>
+        </select>
+      </div>
     </div>
   </div>
 
   <div id="invoice" class="bg-white p-6 max-w-[800px] mx-auto"></div>
 
-  <div class="fixed left-2 top-1/2 transform -translate-y-1/2 flex flex-col gap-2">
+  <div id="trimPagesBtn" class="fixed left-2 top-1/2 transform -translate-y-1/2 flex flex-col gap-2 ">
     <button onclick="adjustMargin(-40)" class="bg-blue-700 hover:bg-blue-800 text-white font-bold text-xl px-3 py-2 rounded hidden" id="upBtn">⬆</button>
     <button onclick="adjustMargin(40)" class="bg-blue-700 hover:bg-blue-800 text-white font-bold text-xl px-3 py-2 rounded hidden" id="downBtn">⬇</button>
   </div>
 
   <script>
+    // ====== الحالة العامة ======
+    let editRowIndex = null;         // الصف الذي يتم تعديله الآن (أو null)
+    let selectedRowIndexes = [];     // اختيار متعدد
+    let rowsPerPageCurrent = 5;      // تقسيم الصفحات الحالي
     let total = 0;
     let rowsData = [];
     let invoiceNo = '';
@@ -85,73 +116,156 @@
       - Warranty terms apply as per the product or service agreement.
     `;
 
+    // ====== أدوات مساعدة ======
     function generateInvoiceNo() {
       const now = new Date();
       return `PRC-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
     }
 
     function formatNumber(num) {
-  return num % 1 === 0 ? num.toLocaleString() : num.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+      return Number.isInteger(num)
+        ? num.toLocaleString('en')
+        : num.toLocaleString('en', { maximumFractionDigits: 2 });
+    }
 
+    function recomputeTotal() {
+      total = rowsData.reduce((sum, r) => {
+        const v = (r && typeof r.amountNum === 'number' && Number.isFinite(r.amountNum)) ? r.amountNum : 0;
+        return sum + v;
+      }, 0);
+    }
 
+    // ====== إنشاء فاتورة ======
     function newInvoice() {
       const dateInput = document.getElementById('dateInput').value;
       const companyInput = document.getElementById('companyInput').value;
+      if (!dateInput || !companyInput) { alert("يرجى إدخال التاريخ واختيار الشركة"); return; }
 
-      if (!dateInput || !companyInput) {
-        alert("يرجى إدخال التاريخ واختيار الشركة");
-        return;
-      }
-
+      if (!invoiceNo) invoiceNo = generateInvoiceNo();
       rowsData = [];
       total = 0;
-      invoiceNo = generateInvoiceNo();
+      editRowIndex = null;
+      selectedRowIndexes = [];
 
-      document.getElementById('currencyDiv').classList.remove('hidden');
-      document.getElementById('itemInputs').classList.remove('hidden');
-      document.getElementById('addRowBtn').classList.remove('hidden');
-      document.getElementById('pdfBtn').classList.remove('hidden');
+      // إظهار أدوات الإدخال والأزرار
+      document.getElementById('currencyDiv') .classList.remove('hidden');
+      document.getElementById('statusDiv')   .classList.remove('hidden');
+      document.getElementById('itemInputs')  .classList.remove('hidden');
+      document.getElementById('addRowBtn')   .classList.remove('hidden');
+      document.getElementById('pdfBtn')      .classList.remove('hidden');
       document.getElementById('fileNameInput').classList.remove('hidden');
-      document.getElementById('finalPagesInput').classList.remove('hidden');
       document.getElementById('trimPagesBtn').classList.remove('hidden');
-      document.getElementById('upBtn').classList.remove('hidden');
-      document.getElementById('downBtn').classList.remove('hidden');
+      document.getElementById('upBtn')       .classList.remove('hidden');
+      document.getElementById('downBtn')     .classList.remove('hidden');
+      const saveBtn = document.getElementById('saveJsonBtn');
+      if (saveBtn) saveBtn.classList.remove('hidden');
 
       buildPaginatedInvoice(rowsData.length);
     }
 
+    // ====== صفوف (إضافة/تحديد/حذف) ======
     function addRow() {
-  const desc = document.getElementById('descInput').value.trim();
-  const qty = parseFloat(document.getElementById('qtyInput').value);
-  const price = parseFloat(document.getElementById('priceInput').value);
-  const currency = document.getElementById('currencyInput').value;
+      const desc = document.getElementById('descInput').value.trim();
+      const qtyRaw = document.getElementById('qtyInput').value;
+      const priceRaw = document.getElementById('priceInput').value;
+      const currency = document.getElementById('currencyInput').value;
 
-  if (!desc || qty <= 0 || price <= 0) {
-    alert("الرجاء إدخال بيانات صحيحة للصف.");
-    return;
-  }
+      const qty = parseFloat(qtyRaw);
+      const price = priceRaw === '' ? null : parseFloat(priceRaw); // السعر ممكن يكون فارغ
 
-  // ✅ استبدال الأسطر بـ <br>
-  const descFormatted = desc.replace(/\n/g, '<br>');
+      if (!desc || isNaN(qty) || qty <= 0) {
+        alert("الرجاء إدخال وصف صحيح وكمية أكبر من 0. السعر اختياري.");
+        return;
+      }
 
-  const amount = qty * price;
-  total += amount;
+      const descFormatted = desc.replace(/\n/g, '<br>');
+      const amountNum = (price === null || isNaN(price)) ? 0 : qty * price;
 
-  rowsData.push({
-    desc: descFormatted,
-    qty,
-    price: `${formatNumber(price)} ${currency}`,
-    amount: `${formatNumber(amount)} ${currency}`
-  });
+      rowsData.push({
+        desc: descFormatted,
+        qty,
+        priceNum: (price === null || isNaN(price)) ? null : price,
+        amountNum,
+        currency,
+        price: (price === null || isNaN(price)) ? '' : `${formatNumber(price)} ${currency}`,
+        amount: (price === null || isNaN(price)) ? '' : `${formatNumber(amountNum)} ${currency}`
+      });
 
-  document.getElementById('descInput').value = '';
-  document.getElementById('qtyInput').value = '';
-  document.getElementById('priceInput').value = '';
+      recomputeTotal();
 
-  buildPaginatedInvoice(rowsData.length);
-}
+      document.getElementById('descInput').value = '';
+      document.getElementById('qtyInput').value  = '';
+      document.getElementById('priceInput').value= '';
 
+      buildPaginatedInvoice(rowsData.length);
+    }
+
+    function selectRow(globalIndex) {
+      const i = selectedRowIndexes.indexOf(globalIndex);
+      if (i > -1) selectedRowIndexes.splice(i, 1);
+      else selectedRowIndexes.push(globalIndex);
+      buildPaginatedInvoice(rowsPerPageCurrent);
+    }
+
+    function deleteSelectedRow() {
+      if (!selectedRowIndexes || selectedRowIndexes.length === 0) return;
+      selectedRowIndexes.sort((a, b) => b - a);
+      selectedRowIndexes.forEach(idx => {
+        if (idx >= 0 && idx < rowsData.length) rowsData.splice(idx, 1);
+      });
+      selectedRowIndexes = [];
+      recomputeTotal();
+      buildPaginatedInvoice(rowsPerPageCurrent);
+    }
+
+    function startEditRow() {
+      if (selectedRowIndexes.length !== 1) return;
+      editRowIndex = selectedRowIndexes[0];
+      buildPaginatedInvoice(rowsPerPageCurrent);
+      setTimeout(() => document.getElementById('editDesc')?.focus(), 0);
+    }
+
+    function saveEditRow(idx) {
+      const descEl  = document.getElementById('editDesc');
+      const qtyEl   = document.getElementById('editQty');
+      const priceEl = document.getElementById('editPrice');
+      if (!descEl || !qtyEl || !priceEl) { cancelEditRow(); return; }
+
+      const desc  = (descEl.value || '').trim().replace(/\n/g, '<br>');
+      const qty   = parseFloat(qtyEl.value);
+      const price = priceEl.value === '' ? null : parseFloat(priceEl.value);
+
+      if (!desc || isNaN(qty) || qty <= 0) {
+        alert('الوصف مطلوب والكمية يجب أن تكون أكبر من 0. السعر اختياري.');
+        return;
+      }
+
+      const currency = rowsData[idx]?.currency || document.getElementById('currencyInput').value || '';
+      const amountNum = (price === null || isNaN(price)) ? 0 : (qty * price);
+
+      rowsData[idx] = {
+        ...rowsData[idx],
+        desc,
+        qty,
+        priceNum: (price === null || isNaN(price)) ? null : price,
+        amountNum,
+        currency,
+        price:  (price === null || isNaN(price)) ? '' : `${formatNumber(price)} ${currency}`,
+        amount: (price === null || isNaN(price)) ? '' : `${formatNumber(amountNum)} ${currency}`
+      };
+
+      recomputeTotal();
+      editRowIndex = null;
+      selectedRowIndexes = [idx];
+      buildPaginatedInvoice(rowsPerPageCurrent);
+    }
+
+    function cancelEditRow() {
+      editRowIndex = null;
+      buildPaginatedInvoice(rowsPerPageCurrent);
+    }
+
+    // ====== بناء الصفحات ======
     function splitChunks(array, size) {
       const chunks = [];
       for (let i = 0; i < array.length; i += size) {
@@ -161,8 +275,10 @@
     }
 
     function buildPaginatedInvoice(customRowsPerPage = 5) {
+      rowsPerPageCurrent = customRowsPerPage;
+
       const company = document.getElementById('companyInput').value;
-      const date = document.getElementById('dateInput').value;
+      const date    = document.getElementById('dateInput').value;
       const invoiceContainer = document.getElementById('invoice');
       invoiceContainer.innerHTML = '';
 
@@ -173,8 +289,20 @@
         const pageDiv = document.createElement('div');
         pageDiv.className = 'relative mb-12';
 
+        // Header
         let headerHTML = '';
         if (index === 0) {
+          const statusInput = document.getElementById('statusInput')?.value || '';
+          let statusHTML = '';
+          if (statusInput) {
+            const statusColor = statusInput === "Paid" ? "text-green-600 font-bold" : "text-red-600 font-bold";
+            statusHTML = `
+              <div class="text-base mb-2">
+                <strong>Status:</strong>
+                <span class="${statusColor}">${statusInput}</span>
+              </div>
+            `;
+          }
           headerHTML = `
             <div class="flex justify-between items-start mb-4 ">
               <div class="flex flex-col">
@@ -190,11 +318,13 @@
             <div class="mt-6">
               <div class="text-base mb-2"><strong>Invoice No:</strong> ${invoiceNo}</div>
               <div class="text-base mb-2"><strong>Company:</strong> ${company}</div>
-              <div class="text-base mb-4"><strong>Invoice Date:</strong> ${date}</div>
+              <div class="text-base mb-2"><strong>Invoice Date:</strong> ${date}</div>
+              ${statusHTML}
             </div>
           `;
         }
 
+        // Table
         let tableHTML = `
           <table class="w-full table-fixed border border-black border-collapse mt-8">
             <thead>
@@ -208,25 +338,79 @@
             <tbody>
         `;
 
-        chunk.forEach(row => {
-          tableHTML += `
-            <tr class="bg-gray-100">
-             <td class="border border-black p-2 break-words whitespace-normal w-full"><div>${row.desc}</div></td>
-              <td class="border border-black p-2 text-center">${row.qty}</td>
-              <td class="border border-black p-2">${row.price}</td>
-              <td class="border border-black p-2">${row.amount}</td>
-            </tr>
-          `;
+        chunk.forEach((row, rowIdx) => {
+          const globalIndex = index * customRowsPerPage + rowIdx;
+          const isSelected = selectedRowIndexes.includes(globalIndex);
+          const selectedCls = isSelected ? 'ring-2 ring-blue-500 bg-yellow-50' : '';
+
+          if (globalIndex === editRowIndex) {
+            tableHTML += `
+              <tr class="bg-yellow-50" onclick="event.stopPropagation()">
+                <!-- DESCRIPTION -->
+                <td class="border border-black p-1">
+                  <input id="editDesc" type="text"
+                         class="w-full h-8 rounded border border-gray-300 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                         placeholder="Description"
+                         value="${(row.desc || '').replaceAll('<br>', ' ')}">
+                </td>
+
+                <!-- QTY -->
+                <td class="border border-black p-1 text-center">
+                  <input id="editQty" type="number"
+                         class="w-16 h-8 rounded border border-gray-300 px-2 text-xs text-center focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                         placeholder="0"
+                         value="${row.qty}">
+                </td>
+
+                <!-- UNIT PRICE -->
+                <td class="border border-black p-1">
+                  <input id="editPrice" type="number"
+                         class="w-24 h-8 rounded border border-gray-300 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500"
+                         placeholder="—"
+                         value="${(typeof row.priceNum === 'number') ? row.priceNum : ''}">
+                </td>
+
+                <!-- AMOUNT + actions -->
+                <td class="border border-black p-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[11px] text-gray-500">auto</span>
+                    <button onclick="event.stopPropagation(); saveEditRow(${globalIndex})"
+                            class="no-pdf inline-flex items-center justify-center h-7 px-2 rounded bg-green-600 text-white text-[11px] hover:bg-green-700">
+                      Save
+                    </button>
+                    <button onclick="event.stopPropagation(); cancelEditRow()"
+                            class="no-pdf inline-flex items-center justify-center h-7 px-2 rounded bg-gray-500 text-white text-[11px] hover:bg-gray-600">
+                      Cancel
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          } else {
+            tableHTML += `
+              <tr class="bg-gray-100 ${selectedCls} cursor-pointer"
+                  onclick="selectRow(${globalIndex})">
+                <td class="border border-black p-2 break-words whitespace-normal w-full"><div>${row.desc}</div></td>
+                <td class="border border-black p-2 text-center">${row.qty}</td>
+                <td class="border border-black p-2">${row.price || ''}</td>
+                <td class="border border-black p-2">${row.amount || ''}</td>
+              </tr>
+            `;
+          }
         });
 
         tableHTML += '</tbody>';
 
         if (isLastChunk) {
+          const currencyFallback = document.getElementById('currencyInput')?.value || '';
+          const firstWithCurrency = rowsData.find(r => r && r.currency);
+          const totalCurrency = firstWithCurrency ? firstWithCurrency.currency : currencyFallback;
+
           tableHTML += `
             <tfoot>
               <tr class="bg-gray-700 text-white font-bold">
                 <td class="border border-black p-2 text-left" colspan="3">Total</td>
-                <td class="border border-black p-2">${formatNumber(total)} ${rowsData[0].price.split(' ')[1]}</td>
+                <td class="border border-black p-2">${formatNumber(total)} ${totalCurrency}</td>
               </tr>
             </tfoot>
           `;
@@ -234,6 +418,7 @@
 
         tableHTML += '</table>';
 
+        // Footer
         let spacer = `<div style="height:${footerMargin}px;"></div>`;
         let footerHTML = '';
         if (isLastChunk) {
@@ -255,30 +440,20 @@
       });
     }
 
-    function trimPages() {
-      const pagesInput = parseInt(document.getElementById('finalPagesInput').value);
-      if (isNaN(pagesInput) || pagesInput <= 0) {
-        alert("يرجى إدخال عدد صفحات صحيح");
-        return;
-      }
-      const rowsPerPage = Math.ceil(rowsData.length / pagesInput);
-      buildPaginatedInvoice(rowsPerPage);
-    }
-
+    // ====== حواف الفوتر ======
     function adjustMargin(change) {
       footerMargin = Math.max(0, footerMargin + change);
-      buildPaginatedInvoice(Math.ceil(rowsData.length / (parseInt(document.getElementById('finalPagesInput').value) || 1)));
+      buildPaginatedInvoice(rowsPerPageCurrent);
     }
 
+    // ====== PDF ======
     function generatePDF() {
       const element = document.getElementById('invoice');
       let fileName = document.getElementById('fileNameInput').value.trim();
-
       if (!fileName) {
         alert("يرجى إدخال اسم الملف قبل توليد الـ PDF");
         return;
       }
-
       html2pdf().set({
         margin: 10,
         filename: `${fileName}.pdf`,
@@ -286,12 +461,170 @@
         html2canvas: {
           scale: 2,
           scrollY: 0,
-          useCORS: true
+          useCORS: true,
+          ignoreElements: (el) => el.classList && el.classList.contains('no-pdf')
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
       }).from(element).save();
     }
+
+    // ====== حفظ/تحميل JSON ======
+    function getInvoiceState() {
+      return {
+        invoiceNo,
+        date: document.getElementById('dateInput').value,
+        company: document.getElementById('companyInput').value,
+        currency: document.getElementById('currencyInput').value,
+        status: document.getElementById('statusInput')?.value || '',
+        footerMargin,
+        rowsData,
+        total
+      };
+    }
+
+    function setInvoiceState(state) {
+      invoiceNo = state.invoiceNo || invoiceNo || generateInvoiceNo();
+      document.getElementById('dateInput').value    = state.date || '';
+      document.getElementById('companyInput').value = state.company || '';
+      document.getElementById('currencyInput').value= state.currency || 'IQD';
+      const si = document.getElementById('statusInput');
+      if (si) si.value = state.status || '';
+      footerMargin = typeof state.footerMargin === 'number' ? state.footerMargin : footerMargin;
+
+      rowsData = Array.isArray(state.rowsData) ? state.rowsData : [];
+      recomputeTotal();
+
+      // إظهار أدوات التعديل
+      document.getElementById('currencyDiv').classList.remove('hidden');
+      document.getElementById('statusDiv').classList.remove('hidden');
+      document.getElementById('itemInputs').classList.remove('hidden');
+      document.getElementById('addRowBtn').classList.remove('hidden');
+      document.getElementById('pdfBtn').classList.remove('hidden');
+      document.getElementById('fileNameInput').classList.remove('hidden');
+      document.getElementById('trimPagesBtn').classList.remove('hidden');
+      document.getElementById('upBtn').classList.remove('hidden');
+      document.getElementById('downBtn').classList.remove('hidden');
+      const saveBtn = document.getElementById('saveJsonBtn');
+      if (saveBtn) saveBtn.classList.remove('hidden');
+
+      buildPaginatedInvoice(rowsData.length || 5);
+    }
+
+    function downloadInvoiceJSON() {
+      const state = getInvoiceState();
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const safeNo = state.invoiceNo ? state.invoiceNo.replace(/[^A-Za-z0-9-_]/g, '_') : 'invoice';
+      a.download = `${safeNo}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      try { localStorage.setItem(`invoice:${state.invoiceNo}`, JSON.stringify(state)); } catch {}
+    }
+
+    function loadInvoiceFromJSON(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const state = JSON.parse(e.target.result);
+
+          // تصحيح سريع لملفات قديمة
+          const fixedRows = Array.isArray(state.rowsData) ? state.rowsData.map(r => {
+            const qty = typeof r.qty === 'number' ? r.qty : parseFloat(r.qty) || 0;
+
+            let priceNum = null;
+            if (typeof r.priceNum === 'number') priceNum = r.priceNum;
+            else if (typeof r.price === 'string') {
+              const m = r.price.match(/[0-9.]+/);
+              priceNum = m ? parseFloat(m[0]) : null;
+            }
+
+            let amountNum = 0;
+            if (typeof r.amountNum === 'number') amountNum = r.amountNum;
+            else if (Number.isFinite(qty) && Number.isFinite(priceNum || 0)) amountNum = qty * (priceNum || 0);
+
+            const currencyGuess = r.currency || (typeof r.price === 'string'
+              ? (r.price.replace(/[0-9.,\s]/g, '').trim() || '')
+              : '');
+
+            const currency = currencyGuess || state.currency || document.getElementById('currencyInput').value || 'IQD';
+
+            return {
+              desc: r.desc || '',
+              qty,
+              priceNum: Number.isFinite(priceNum) ? priceNum : null,
+              amountNum: Number.isFinite(amountNum) ? amountNum : 0,
+              currency,
+              price:  (Number.isFinite(priceNum)  ? `${formatNumber(priceNum)} ${currency}` : ''),
+              amount: (Number.isFinite(amountNum) && amountNum > 0 ? `${formatNumber(amountNum)} ${currency}` : '')
+            };
+          }) : [];
+
+          const nextState = { ...state, rowsData: fixedRows };
+          setInvoiceState(nextState);
+          alert('تم تحميل الفاتورة ويمكنك تعديلها الآن.');
+        } catch (err) {
+          console.error(err);
+          alert('ملف JSON غير صالح.');
+        }
+      };
+      reader.readAsText(file, 'utf-8');
+    }
+
+    // ====== تحديث الفاتورة عند تغيير الهيدر ======
+    document.addEventListener('change', (e) => {
+      if (e.target && e.target.id === 'statusInput') {
+        if (!invoiceNo) return;
+        buildPaginatedInvoice(rowsPerPageCurrent);
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      ['dateInput', 'companyInput', 'currencyInput', 'statusInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('change', () => {
+            if (invoiceNo) buildPaginatedInvoice(rowsPerPageCurrent);
+          });
+        }
+      });
+    });
+
+    // ====== تحكم الكيبورد: Enter/Backspace ======
+    document.addEventListener('keydown', (e) => {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      const isTyping = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+
+      // Backspace: حذف الصفوف المحددة (إذا مو داخل كتابة ولا تعديل)
+      if (e.key === 'Backspace') {
+        if (isTyping || editRowIndex !== null) return;
+        if (selectedRowIndexes && selectedRowIndexes.length > 0) {
+          e.preventDefault();
+          deleteSelectedRow();
+        }
+        return;
+      }
+
+      // Enter: فتح التعديل أو حفظه
+      if (e.key === 'Enter') {
+        // Shift+Enter داخل الوصف = سطر جديد
+        if (e.target && e.target.id === 'editDesc' && e.shiftKey) return;
+
+        e.preventDefault();
+
+        if (editRowIndex === null) {
+          if (selectedRowIndexes && selectedRowIndexes.length === 1) {
+            startEditRow();
+          }
+        } else {
+          saveEditRow(editRowIndex);
+        }
+      }
+    });
   </script>
 </body>
 </html>
